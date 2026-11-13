@@ -1,0 +1,59 @@
+name: Soshiotsuki Feed
+
+on:
+  schedule:
+    - cron: "5,20,35,50 * * * *"   # every 15 min, staggered from the other feeds; GitHub skips some scheduled runs at busy times
+  workflow_dispatch:        # lets you run it from the Actions tab
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # save the list of items already seen
+  pages: write      # publish the site
+  id-token: write
+
+concurrency:
+  group: feed
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main   # always the latest, also when re-running an older run
+
+      # The code (and this feed's shop list, brands/soshiotsuki.json) lives in the rickfeed repo,
+      # shared by all the feeds, so fixes there apply here on the next run.
+      - uses: actions/checkout@v6
+        with:
+          repository: olekpachecodul/rickfeed
+          path: engine
+
+      - name: Check the shops and build the page
+        run: python3 engine/rick_feed.py --brand engine/brands/soshiotsuki.json --site site --state data/state.json
+
+      - name: Save what's been seen
+        continue-on-error: true   # never let this stop the page from publishing
+        run: |
+          if [ -n "$(git status --porcelain -- data)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data
+            git commit -m "Update seen items"
+            for attempt in 1 2 3; do
+              git pull --rebase -X theirs origin main && git push origin HEAD:main && break
+              sleep 5
+            done
+          fi
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v5
